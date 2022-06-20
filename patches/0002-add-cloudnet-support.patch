@@ -1,0 +1,451 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: derklaro <git@derklaro.dev>
+Date: Mon, 20 Jun 2022 20:42:10 +0200
+Subject: [PATCH] add cloudnet support
+
+
+diff --git a/build.gradle b/build.gradle
+index 2c139bb522fa0aa0b529eeb6acb0abc0d5e7a641..87345a87c62fe610bfb012f592934d80164d66e8 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -26,7 +26,7 @@ subprojects {
+ 
+     tasks.withType(JavaCompile) {
+         options.encoding = 'UTF-8'
+-        options.release = 8
++        options.release = 17 // cloudnet
+     }
+ 
+     processResources {
+@@ -41,10 +41,12 @@ subprojects {
+     repositories {
+         mavenCentral()
+         maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
++        maven { url "https://s01.oss.sonatype.org/content/repositories/snapshots/" } // cloudnet
+         maven { url "https://repo.lucko.me/" }
+         maven { url "https://jitpack.io" }
+     }
+ 
++    java { disableAutoTargetJvm() } // cloudnet
+ }
+ 
+ def determinePatchVersion() {
+diff --git a/settings.gradle b/settings.gradle
+index de6126d4a1918be9cdb2c37038c2b0cb5a19c1c4..f976e53a863bd2ddba227cab28ffdd8999b99c75 100644
+--- a/settings.gradle
++++ b/settings.gradle
+@@ -23,4 +23,5 @@ include (
+         'spark-nukkit',
+         'spark-waterdog',
+         'spark-minestom'
++        ,'spark-cloudnet' // cloudnet - cloudnet spark support
+ )
+diff --git a/spark-cloudnet/build.gradle b/spark-cloudnet/build.gradle
+new file mode 100644
+index 0000000000000000000000000000000000000000..75ad47013dac54c65129c4d3608b81039711f0d2
+--- /dev/null
++++ b/spark-cloudnet/build.gradle
+@@ -0,0 +1,41 @@
++plugins {
++    id 'eu.cloudnetservice.juppiter' version '0.3.2'
++    id 'com.github.johnrengelman.shadow' version '7.0.0'
++}
++
++dependencies {
++    implementation project(':spark-common')
++    compileOnly 'eu.cloudnetservice.cloudnet:node:4.0.0-SNAPSHOT'
++}
++
++moduleJson {
++    version = project.pluginVersion
++    description = project.description
++
++    author = 'CloudNetService'
++    name = 'spark-cloudnet-node'
++    main = 'me.lucko.spark.cloudnet.CloudNetSparkModule'
++}
++
++shadowJar {
++    archiveName = "spark-${project.pluginVersion}-cloudnet.jar"
++
++    relocate 'okio', 'me.lucko.spark.lib.okio'
++    relocate 'okhttp3', 'me.lucko.spark.lib.okhttp3'
++    relocate 'net.kyori.adventure', 'me.lucko.spark.lib.adventure'
++    relocate 'net.kyori.examination', 'me.lucko.spark.lib.adventure.examination'
++    relocate 'net.bytebuddy', 'me.lucko.spark.lib.bytebuddy'
++    relocate 'org.tukaani.xz', 'me.lucko.spark.lib.xz'
++    relocate 'com.google.protobuf', 'me.lucko.spark.lib.protobuf'
++    relocate 'org.objectweb.asm', 'me.lucko.spark.lib.asm'
++    relocate 'one.profiler', 'me.lucko.spark.lib.asyncprofiler'
++
++    exclude 'module-info.class'
++    exclude 'META-INF/maven/**'
++    exclude 'META-INF/proguard/**'
++}
++
++artifacts {
++    archives shadowJar
++    shadow shadowJar
++}
+diff --git a/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetClassSourceLookup.java b/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetClassSourceLookup.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..847de19003121d96db73de48261cb14ab6082f0a
+--- /dev/null
++++ b/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetClassSourceLookup.java
+@@ -0,0 +1,46 @@
++/*
++ * This file is part of spark.
++ *
++ *  Copyright (c) lucko (Luck) <luck@lucko.me>
++ *  Copyright (c) contributors
++ *
++ *  This program is free software: you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation, either version 3 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package me.lucko.spark.cloudnet;
++
++import eu.cloudnetservice.driver.module.ModuleProvider;
++import eu.cloudnetservice.driver.module.ModuleWrapper;
++import me.lucko.spark.common.util.ClassSourceLookup;
++import org.jetbrains.annotations.Nullable;
++
++public class CloudNetClassSourceLookup extends ClassSourceLookup.ByClassLoader {
++
++	private final ModuleProvider moduleProvider;
++
++	public CloudNetClassSourceLookup(ModuleProvider moduleProvider) {
++		this.moduleProvider = moduleProvider;
++	}
++
++	@Override
++	public @Nullable String identify(ClassLoader loader) {
++		for (ModuleWrapper module : moduleProvider.modules()) {
++			if (module.classLoader() == loader) {
++				return module.moduleConfiguration().name();
++			}
++		}
++
++		return null;
++	}
++}
+diff --git a/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetCommandHandler.java b/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetCommandHandler.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d190c49774b1838d9520f64dd33e74b3540e5d5d
+--- /dev/null
++++ b/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetCommandHandler.java
+@@ -0,0 +1,64 @@
++/*
++ * This file is part of spark.
++ *
++ *  Copyright (c) lucko (Luck) <luck@lucko.me>
++ *  Copyright (c) contributors
++ *
++ *  This program is free software: you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation, either version 3 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package me.lucko.spark.cloudnet;
++
++import com.google.common.collect.SetMultimap;
++import dev.derklaro.reflexion.Reflexion;
++import eu.cloudnetservice.driver.command.CommandInfo;
++import eu.cloudnetservice.driver.event.EventListener;
++import eu.cloudnetservice.node.Node;
++import eu.cloudnetservice.node.command.defaults.DefaultCommandProvider;
++import eu.cloudnetservice.node.event.command.CommandPreProcessEvent;
++import java.util.Arrays;
++import java.util.Collections;
++import me.lucko.spark.common.SparkPlatform;
++
++public class CloudNetCommandHandler {
++
++	private final SparkPlatform platform;
++
++	public CloudNetCommandHandler(SparkPlatform platform) {
++		// hack - but we normally don't allow that so...
++		Reflexion.on(DefaultCommandProvider.class, Node.instance().commandProvider())
++				.findField("registeredCommands")
++				.flatMap(accessor -> accessor.<SetMultimap<ClassLoader, CommandInfo>>getValue().asOptional())
++				.ifPresent(map -> map.put(CloudNetCommandHandler.class.getClassLoader(), new CommandInfo(
++						platform.getPlugin().getCommandName(),
++						Collections.emptySet(),
++						"cloudnet.command.spark",
++						"A spark cloudnet command",
++						null,
++						Collections.emptyList()
++				)));
++		this.platform = platform;
++	}
++
++	@EventListener
++	public void handlePreCommand(CommandPreProcessEvent event) {
++		String[] commandLineArgs = event.commandLine().trim().split(" ");
++		if (commandLineArgs.length >= 1 && commandLineArgs[0].equalsIgnoreCase(platform.getPlugin().getCommandName())) {
++			platform.executeCommand(
++					new CloudNetCommandSender(event.commandSource()),
++					Arrays.copyOfRange(commandLineArgs, 1, commandLineArgs.length));
++			event.cancelled(true);
++		}
++	}
++}
+diff --git a/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetCommandSender.java b/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetCommandSender.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..dfa9160812063bfbc2d30abcd8b0217caf207d70
+--- /dev/null
++++ b/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetCommandSender.java
+@@ -0,0 +1,74 @@
++/*
++ * This file is part of spark.
++ *
++ *  Copyright (c) lucko (Luck) <luck@lucko.me>
++ *  Copyright (c) contributors
++ *
++ *  This program is free software: you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation, either version 3 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package me.lucko.spark.cloudnet;
++
++import eu.cloudnetservice.node.command.source.CommandSource;
++import java.util.UUID;
++import me.lucko.spark.common.command.sender.AbstractCommandSender;
++import net.kyori.adventure.text.Component;
++import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
++
++public class CloudNetCommandSender extends AbstractCommandSender<CommandSource> {
++
++	private static final UUID NIL_UUID = new UUID(0, 0);
++
++	public CloudNetCommandSender(CommandSource source) {
++		super(source);
++	}
++
++	@Override
++	public String getName() {
++		return delegate.name();
++	}
++
++	@Override
++	public UUID getUniqueId() {
++		return NIL_UUID;
++	}
++
++	@Override
++	public void sendMessage(Component message) {
++		delegate.sendMessage(LegacyComponentSerializer.legacyAmpersand().serialize(message));
++	}
++
++	@Override
++	public boolean hasPermission(String permission) {
++		return delegate.checkPermission(permission);
++	}
++
++	@Override
++	public int hashCode() {
++		return this.getName().hashCode();
++	}
++
++	@Override
++	public boolean equals(Object o) {
++		if (this == o) {
++			return true;
++		}
++		if (o == null || getClass() != o.getClass()) {
++			return false;
++		}
++
++		AbstractCommandSender<?> that = (AbstractCommandSender<?>) o;
++		return this.getName().equals(that.getName());
++	}
++}
+diff --git a/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetPlatformInfo.java b/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetPlatformInfo.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..662ea012928fc0f399dae0db27da33ed03c5952f
+--- /dev/null
++++ b/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetPlatformInfo.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of spark.
++ *
++ *  Copyright (c) lucko (Luck) <luck@lucko.me>
++ *  Copyright (c) contributors
++ *
++ *  This program is free software: you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation, either version 3 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package me.lucko.spark.cloudnet;
++
++import eu.cloudnetservice.driver.CloudNetDriver;
++import me.lucko.spark.common.platform.PlatformInfo;
++
++public class CloudNetPlatformInfo implements PlatformInfo {
++
++	private final CloudNetDriver driver;
++
++	public CloudNetPlatformInfo(CloudNetDriver driver) {
++		this.driver = driver;
++	}
++
++	@Override
++	public Type getType() {
++		return Type.CLIENT; // technically not a client but this excludes the player count
++	}
++
++	@Override
++	public String getName() {
++		return "CloudNet";
++	}
++
++	@Override
++	public String getVersion() {
++		return driver.version().toString();
++	}
++
++	@Override
++	public String getMinecraftVersion() {
++		return null;
++	}
++}
+diff --git a/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetSparkModule.java b/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetSparkModule.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..01b44cc2ccce1195e9595d986cc8ea9c4dfdc199
+--- /dev/null
++++ b/spark-cloudnet/src/main/java/me/lucko/spark/cloudnet/CloudNetSparkModule.java
+@@ -0,0 +1,95 @@
++/*
++ * This file is part of spark.
++ *
++ *  Copyright (c) lucko (Luck) <luck@lucko.me>
++ *  Copyright (c) contributors
++ *
++ *  This program is free software: you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation, either version 3 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package me.lucko.spark.cloudnet;
++
++import eu.cloudnetservice.common.log.LogManager;
++import eu.cloudnetservice.common.log.Logger;
++import eu.cloudnetservice.driver.module.ModuleLifeCycle;
++import eu.cloudnetservice.driver.module.ModuleTask;
++import eu.cloudnetservice.driver.module.driver.DriverModule;
++import eu.cloudnetservice.node.command.source.CommandSource;
++import java.nio.file.Path;
++import java.util.logging.Level;
++import java.util.stream.Stream;
++import me.lucko.spark.common.SparkPlatform;
++import me.lucko.spark.common.SparkPlugin;
++import me.lucko.spark.common.command.sender.CommandSender;
++import me.lucko.spark.common.platform.PlatformInfo;
++import me.lucko.spark.common.util.ClassSourceLookup;
++
++public class CloudNetSparkModule extends DriverModule implements SparkPlugin {
++
++	private static final Logger LOGGER = LogManager.logger(CloudNetSparkModule.class);
++
++	private SparkPlatform platform;
++
++	@ModuleTask
++	public void onLoad() {
++		this.platform = new SparkPlatform(this);
++		this.platform.enable();
++		driver().eventManager().registerListener(new CloudNetCommandHandler(this.platform));
++	}
++
++	@ModuleTask(event = ModuleLifeCycle.STOPPED)
++	public void onDisable() {
++		this.platform.disable();
++	}
++
++	@Override
++	public String getVersion() {
++		return moduleConfig().version();
++	}
++
++	@Override
++	public Path getPluginDirectory() {
++		return moduleWrapper().dataDirectory();
++	}
++
++	@Override
++	public String getCommandName() {
++		return "sparkc";
++	}
++
++	@Override
++	public Stream<? extends CommandSender> getCommandSenders() {
++		return Stream.of(new CloudNetCommandSender(CommandSource.console()));
++	}
++
++	@Override
++	public void executeAsync(Runnable task) {
++		driver().taskExecutor().execute(task);
++	}
++
++	@Override
++	public void log(Level level, String msg) {
++		LOGGER.log(level, msg);
++	}
++
++	@Override
++	public PlatformInfo getPlatformInfo() {
++		return new CloudNetPlatformInfo(driver());
++	}
++
++	@Override
++	public ClassSourceLookup createClassSourceLookup() {
++		return new CloudNetClassSourceLookup(driver().moduleProvider());
++	}
++}

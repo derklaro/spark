@@ -1,0 +1,37 @@
+name: "build"
+on:
+  push:
+    branches: [ "**" ]
+    tags-ignore: [ "**" ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout repository"
+        uses: "actions/checkout@v2"
+
+      - name: "Validate gradle wrapper"
+        uses: "gradle/wrapper-validation-action@v1"
+
+      - name: "Setup jdk 17"
+        uses: "actions/setup-java@v2"
+        with:
+          distribution: 'temurin'
+          java-version: "17"
+
+      - name: "Configure action environment"
+        run: git config --global user.email "actions@github.com" && git config --global user.name "Github Actions"
+
+      - name: "Init git modules and apply patches"
+        run: "git submodule update --init && ./gradlew applyPatches"
+
+      - name: "Build project"
+        run: "cd patched-spark && ./gradlew build shadowJar"
+
+      - name: "Upload artifacts"
+        uses: actions/upload-artifact@v3
+        with:
+          name: "Spark-CloudNet"
+          path: "patched-spark/spark-cloudnet/build/libs/spark-[.\d]+-cloudnet.jar"
