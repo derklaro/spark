@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: derklaro <git@derklaro.dev>
+Date: Mon, 20 Jun 2022 17:06:49 +0200
+Subject: [PATCH] disable forge module due to include-build remapping issues
+
+
+diff --git a/settings.gradle b/settings.gradle
+index 5dd9582819318ebd179aa8410a963f4c702577c4..de6126d4a1918be9cdb2c37038c2b0cb5a19c1c4 100644
+--- a/settings.gradle
++++ b/settings.gradle
+@@ -18,7 +18,7 @@ include (
+         'spark-velocity4',
+         'spark-sponge7',
+         'spark-sponge8',
+-        'spark-forge',
++//        'spark-forge', cloudnet - disabled due to remapping issues
+         'spark-fabric',
+         'spark-nukkit',
+         'spark-waterdog',
